@@ -28,8 +28,7 @@ Author:
 Pranav Cherukupalli <cherukupallip@gmail.com>
 */
 
-// TODO: find pins that can be used for wakeup
-#define BUTTON_PIN_BITMASK 0x8004 // GPIOs 2 and 15
+
 
 
 // Define OLED PIN
@@ -37,7 +36,7 @@ Pranav Cherukupalli <cherukupallip@gmail.com>
 //#define OLED_SCL 15
 //#define OLED_RST 16
 
-// LoRa pins
+// LoRa pins2^INPUT_DOOR 
 //#define LORA_MISO 19
 //#define LORA_CS 18
 //#define LORA_MOSI 27
@@ -46,6 +45,26 @@ Pranav Cherukupalli <cherukupallip@gmail.com>
 //#define LORA_IRQ 26
 // LoRa Band (change it if you are outside Europe according to your country)
 #define LORA_BAND 866E6
+
+
+
+// TODO: find pins that can be used for wakeup
+// TODO: maybe use shift instead
+// RTC pins: 
+//    ESP32: 0, 2, 4, 12-15, 25-27, 32-39;
+//    ESP32-S2: 0-21;
+//    ESP32-S3: 0-21.
+
+
+// GPIO 2
+#define INPUT_MOTION 2
+// letterbox door, we want to wire it with pull up resistor to have HIGH when door is open (switch open)
+#define INPUT_DOOR 15
+
+#define WAKEUP_BITMASK_INPUT_MOTION (1 << (INPUT_MOTION-1))
+#define WAKEUP_BITMASK_INPUT_DOOR (1 << (INPUT_DOOR - 1))
+
+#define WAKEUP_BITMASK  (WAKEUP_BITMASK_INPUT_MOTION | WAKEUP_BITMASK_INPUT_DOOR)
 
 RTC_DATA_ATTR int bootCount = 0;
 
@@ -65,7 +84,7 @@ void initializeDisplay()
   Wire.begin(OLED_SDA, OLED_SCL);
   if (!display.begin(SSD1306_SWITCHCAPVCC, 0x3c))
   {
-    Serial.println("Failed to initialize the dispaly");
+    Serial.println("Failed to initialize the display");
     for (;;)
       ;
   }
@@ -151,6 +170,16 @@ void print_GPIO_wake_up()
   uint64_t GPIO_reason = esp_sleep_get_ext1_wakeup_status();
   Serial.print("GPIO that triggered the wake up: GPIO ");
   Serial.println((log(GPIO_reason)) / log(2), 0);
+
+  if(GPIO_reason & WAKEUP_BITMASK_INPUT_DOOR)
+  {
+    Serial.println("Door was opened");
+  }
+
+  if(GPIO_reason & WAKEUP_BITMASK_INPUT_MOTION)
+  {
+    Serial.println("Motion was triggered");
+  }
 }
 
 void setup()
@@ -181,7 +210,10 @@ void setup()
   // esp_deep_sleep_enable_ext0_wakeup(GPIO_NUM_15,1); //1 = High, 0 = Low
 
   // If you were to use ext1, you would use it like
-  esp_sleep_enable_ext1_wakeup(BUTTON_PIN_BITMASK, ESP_EXT1_WAKEUP_ANY_HIGH);
+  if(esp_sleep_enable_ext1_wakeup(WAKEUP_BITMASK, ESP_EXT1_WAKEUP_ANY_HIGH) != ESP_OK)
+  {
+    Serial.println("Failed to configure ext1 with the given parameters");
+  }
 
   // Go to sleep now
   Serial.println("Going to sleep now");
