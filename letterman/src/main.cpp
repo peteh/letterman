@@ -4,6 +4,7 @@
 #include <Wire.h>
 #include <Adafruit_GFX.h>
 #include <Adafruit_SSD1306.h>
+#include <ArduinoJson.h>
 
 /*
 Deep Sleep with External Wake Up
@@ -27,49 +28,32 @@ source. They are pins: 0,2,4,12-15,25-27,32-39.
 Author:
 Pranav Cherukupalli <cherukupallip@gmail.com>
 */
-
-
-
-
-// Define OLED PIN
-//#define OLED_SDA 4
-//#define OLED_SCL 15
-//#define OLED_RST 16
-
-// LoRa pins2^INPUT_DOOR 
-//#define LORA_MISO 19
-//#define LORA_CS 18
-//#define LORA_MOSI 27
-//#define LORA_SCK 5
-//#define LORA_RST 14
-//#define LORA_IRQ 26
 // LoRa Band (change it if you are outside Europe according to your country)
 #define LORA_BAND 866E6
 
-
-
 // TODO: find pins that can be used for wakeup
 // TODO: maybe use shift instead
-// RTC pins: 
+// RTC pins:
 //    ESP32: 0, 2, 4, 12-15, 25-27, 32-39;
 //    ESP32-S2: 0-21;
 //    ESP32-S3: 0-21.
-
 
 // GPIO 2
 #define INPUT_MOTION 2
 // letterbox door, we want to wire it with pull up resistor to have HIGH when door is open (switch open)
 #define INPUT_DOOR 15
 
-#define WAKEUP_BITMASK_INPUT_MOTION (1 << (INPUT_MOTION-1))
+#define WAKEUP_BITMASK_INPUT_MOTION (1 << (INPUT_MOTION - 1))
 #define WAKEUP_BITMASK_INPUT_DOOR (1 << (INPUT_DOOR - 1))
 
-#define WAKEUP_BITMASK  (WAKEUP_BITMASK_INPUT_MOTION | WAKEUP_BITMASK_INPUT_DOOR)
+#define WAKEUP_BITMASK (WAKEUP_BITMASK_INPUT_MOTION | WAKEUP_BITMASK_INPUT_DOOR)
 
 RTC_DATA_ATTR int bootCount = 0;
 
-Adafruit_SSD1306 display(128, 32, &Wire, OLED_RST);
-
+#define SCREEN_WIDTH 128                                      // OLED display width, in pixels
+#define SCREEN_HEIGHT 64                                      // OLED display height, in pixels
+Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire); //, OLED_RST);
+uint16_t msgCounter = 0;
 void resetDisplay()
 {
   digitalWrite(OLED_RST, LOW);
@@ -77,12 +61,13 @@ void resetDisplay()
   digitalWrite(OLED_RST, HIGH);
 }
 
-void initializeDisplay()
+void initDisplay()
 {
   Serial.println("Initializing display...");
 
   Wire.begin(OLED_SDA, OLED_SCL);
-  if (!display.begin(SSD1306_SWITCHCAPVCC, 0x3c))
+  Serial.println("Wire done");
+  if (!display.begin(SSD1306_SWITCHCAPVCC, 0x3c, false, true))
   {
     Serial.println("Failed to initialize the display");
     for (;;)
@@ -94,10 +79,7 @@ void initializeDisplay()
   display.setTextColor(WHITE);
   display.setTextSize(1);
   display.setCursor(0, 0);
-  display.println("Welcome to LORA");
-
-  display.setTextSize(1);
-  display.println("Lora sender");
+  display.println("LORA SENDER");
   display.display();
 }
 
@@ -124,8 +106,18 @@ void initLoRa()
 
 void sendLoRaMsg()
 {
+  uint8_t buffer[200];
   LoRa.beginPacket();
-  LoRa.print("hello");
+  DynamicJsonDocument doc(200);
+
+  // Add values in the document
+  //
+  doc["door"] = "on";   // off = closed
+  doc["motion"] = "on"; // off = clear
+  doc["counter"] = msgCounter;
+  size_t length = serializeJson(doc, buffer, sizeof(buffer));
+  LoRa.write((uint8_t)length); // max length 255, potential overflow! 
+  LoRa.write(buffer, length);
   LoRa.endPacket();
 }
 
@@ -171,12 +163,12 @@ void print_GPIO_wake_up()
   Serial.print("GPIO that triggered the wake up: GPIO ");
   Serial.println((log(GPIO_reason)) / log(2), 0);
 
-  if(GPIO_reason & WAKEUP_BITMASK_INPUT_DOOR)
+  if (GPIO_reason & WAKEUP_BITMASK_INPUT_DOOR)
   {
     Serial.println("Door was opened");
   }
 
-  if(GPIO_reason & WAKEUP_BITMASK_INPUT_MOTION)
+  if (GPIO_reason & WAKEUP_BITMASK_INPUT_MOTION)
   {
     Serial.println("Motion was triggered");
   }
@@ -184,9 +176,13 @@ void print_GPIO_wake_up()
 
 void setup()
 {
+  pinMode(LED_BUILTIN, OUTPUT);
+
   Serial.begin(115200);
   delay(1000); // Take some time to open up the Serial Monitor
-
+  initDisplay();
+  Serial.println("Init done");
+  initLoRa();
   // Increment boot number and print it every reboot
   ++bootCount;
   Serial.println("Boot number: " + String(bootCount));
@@ -210,7 +206,7 @@ void setup()
   // esp_deep_sleep_enable_ext0_wakeup(GPIO_NUM_15,1); //1 = High, 0 = Low
 
   // If you were to use ext1, you would use it like
-  if(esp_sleep_enable_ext1_wakeup(WAKEUP_BITMASK, ESP_EXT1_WAKEUP_ANY_HIGH) != ESP_OK)
+  if (esp_sleep_enable_ext1_wakeup(WAKEUP_BITMASK, ESP_EXT1_WAKEUP_ANY_HIGH) != ESP_OK)
   {
     Serial.println("Failed to configure ext1 with the given parameters");
   }
@@ -218,11 +214,17 @@ void setup()
   // Go to sleep now
   Serial.println("Going to sleep now");
   delay(1000);
-  esp_deep_sleep_start();
-  Serial.println("This will never be printed");
+  // esp_deep_sleep_start();
+  // Serial.println("This will never be printed");
 }
-
+bool ledState = false;
 void loop()
 {
-  // This is not going to be called
+  Serial.println("Sending Message");
+  sendLoRaMsg();
+  Serial.println("Finished sending Message");
+  msgCounter++;
+  ledState = !ledState;
+  digitalWrite(LED_BUILTIN, ledState);
+  delay(5000);
 }
