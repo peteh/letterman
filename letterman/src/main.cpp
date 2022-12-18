@@ -109,21 +109,28 @@ void initLoRa()
 void sendLoRaMsg()
 {
   // Identifier:uint16, payloadsize:uint16t, payload
-  uint8_t buffer[200];
+  uint8_t buffer[1000];
   LoRa.beginPacket();
-  //LoRa.write((uint8_t*)(&loraIdentifier), sizeof(loraIdentifier));
-  LoRa.write(loraIdentifier);
+  LoRa.write((uint8_t*)(&loraIdentifier),sizeof(loraIdentifier));
 
-  DynamicJsonDocument doc(200);
+  StaticJsonDocument<1000> doc;
   // Add values in the document
   //
-  doc["door"] = "on";   // off = closed
-  doc["motion"] = "on"; // off = clear
-  doc["counter"] = msgCounter;
-  size_t length = serializeJson(doc, buffer, sizeof(buffer));
-  LoRa.write((uint16_t)length);
+  doc["d"] = "on";   // off = closed
+  doc["m"] = "on"; // off = clear
+  doc["c"] = msgCounter;
+  uint16_t length = (uint16_t)serializeJson(doc, buffer, sizeof(buffer));
+  // write number of bytes for payload
+  LoRa.write((uint8_t*)(&length), sizeof(length));
+  // write buffer
   LoRa.write(buffer, length);
+  // send it out
   LoRa.endPacket();
+
+  Serial.printf("Sending %d bytes payload", length);
+  Serial.println();
+  Serial.printf("Buffer: %s", buffer);
+  Serial.println();
 }
 
 /*
