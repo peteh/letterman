@@ -54,6 +54,8 @@ RTC_DATA_ATTR int bootCount = 0;
 #define SCREEN_HEIGHT 64                                      // OLED display height, in pixels
 Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire); //, OLED_RST);
 uint16_t msgCounter = 0;
+uint32_t loraIdentifier = 0xDEADBEEF;
+
 void resetDisplay()
 {
   digitalWrite(OLED_RST, LOW);
@@ -106,17 +108,20 @@ void initLoRa()
 
 void sendLoRaMsg()
 {
+  // Identifier:uint16, payloadsize:uint16t, payload
   uint8_t buffer[200];
   LoRa.beginPacket();
-  DynamicJsonDocument doc(200);
+  //LoRa.write((uint8_t*)(&loraIdentifier), sizeof(loraIdentifier));
+  LoRa.write(loraIdentifier);
 
+  DynamicJsonDocument doc(200);
   // Add values in the document
   //
   doc["door"] = "on";   // off = closed
   doc["motion"] = "on"; // off = clear
   doc["counter"] = msgCounter;
   size_t length = serializeJson(doc, buffer, sizeof(buffer));
-  LoRa.write((uint8_t)length); // max length 255, potential overflow! 
+  LoRa.write((uint16_t)length);
   LoRa.write(buffer, length);
   LoRa.endPacket();
 }

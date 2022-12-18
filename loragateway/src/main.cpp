@@ -78,16 +78,13 @@ void loop()
   // try to parse packet
   int packetSize = LoRa.parsePacket();
 
-  if (packetSize)
+  if (packetSize > 5)
   {
     // received a packet
     Serial.println("Received packet: ");
-
     // read packet header bytes:
-    int recipient = 0; //LoRa.read();       // recipient address
-    byte sender = 0; // LoRa.read();         // sender address
-    byte incomingMsgId = 0; //LoRa.read();  // incoming msg ID
-    byte incomingLength = 0; // LoRa.read(); // incoming msg length
+    uint32_t sender = LoRa.read();       // recipient address
+    uint16_t incomingLength = LoRa.read(); // incoming msg length
 
     LoRaData = "";
 
@@ -103,8 +100,7 @@ void loop()
     //}
 
     Serial.println("Received from: 0x" + String(sender, HEX));
-    Serial.println("Sent to: 0x" + String(recipient, HEX));
-    Serial.println("Message ID: " + String(incomingMsgId));
+    Serial.println("Sent to: 0x" + String(sender, HEX));
     Serial.println("Message length: " + String(incomingLength));
     Serial.println("Message: " + LoRaData);
     Serial.println("RSSI: " + String(LoRa.packetRssi()));
