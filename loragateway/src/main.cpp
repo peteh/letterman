@@ -1,10 +1,4 @@
-/*********
-  Rui Santos
-  Complete project details at https://RandomNerdTutorials.com/ttgo-lora32-sx1276-arduino-ide/
-*********/
-#include <ArduinoJson.h>
-
-// Libraries for LoRa
+#include <Arduino.h>
 #include <SPI.h>
 #include <LoRa.h>
 
@@ -13,12 +7,8 @@
 #include <Adafruit_GFX.h>
 #include <Adafruit_SSD1306.h>
 
-// define the pins used by the LoRa transceiver module
-#define SCK 5
-#define MISO 19
-#define MOSI 27
-#define RST 14
-#define DIO0 26
+// JSON Handling
+#include <ArduinoJson.h>
 
 // 433E6 for Asia
 // 866E6 for Europe
@@ -33,6 +23,10 @@ Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RST);
 
 void setup()
 {
+  Serial.begin(115200);
+  while (!Serial)
+    ;
+
   // initialize OLED
   Wire.begin(OLED_SDA, OLED_SCL);
   if (!display.begin(SSD1306_SWITCHCAPVCC, 0x3c, false, false))
@@ -49,70 +43,61 @@ void setup()
   display.print("LORA RECEIVER ");
   display.display();
 
-  // initialize Serial Monitor
-  Serial.begin(115200);
 
+  Serial.println("LoRa Receiver");
   // SPI LoRa pins
   SPI.begin(LORA_SCK, LORA_MISO, LORA_MOSI, LORA_CS);
   // setup LoRa transceiver module
   LoRa.setPins(LORA_CS, LORA_RST, LORA_IRQ);
 
-  if (!LoRa.begin(BAND))
+  if (!LoRa.begin(866E6))
   {
     Serial.println("Starting LoRa failed!");
     while (1)
       ;
   }
-  // Serial.println("LoRa Initializing OK!");
-  display.setCursor(0, 10);
-  display.println("LoRa Initializing OK!");
-  display.display();
 }
 
 void loop()
 {
   // try to parse packet
   int packetSize = LoRa.parsePacket();
-
-  if (packetSize > sizeof(uint16_t) + sizeof(uint16_t))
+  if (packetSize)
   {
+    uint8_t buffer[1000];
     // received a packet
-    Serial.println("Received packet: ");
-    // read packet header bytes:
+    Serial.print("Received packet '");
 
+    // TODO: check read length
     uint32_t sender;
     LoRa.readBytes((uint8_t *)(&sender), sizeof(sender)); // recipient address
-
+    // TODO: check read length
     uint16_t expectedLength;
     LoRa.readBytes((uint8_t *)(&expectedLength), sizeof(expectedLength)); // incoming msg length
 
-    uint8_t loraBuffer[1000];
-    loraBuffer[0] = 0;
-    uint16_t readLength = 0;
-    readLength = LoRa.readBytes(loraBuffer, expectedLength);
-    /*
-    while (LoRa.available())
-    {
-      uint8_t data = LoRa.read();
-      loraBuffer[readLength] = data;
-      readLength++;
-      // LoRaData += (char)data;
-    }
-    */
-    loraBuffer[readLength] = 0;
+    // read packet
+    int readLength = LoRa.readBytes(buffer, expectedLength);
+    buffer[readLength] = 0;
+    Serial.printf("%s", buffer);
+    // print RSSI of packet
+    Serial.print("' with RSSI ");
+    Serial.println(LoRa.packetRssi());
 
-    if (expectedLength != readLength)
-    { // check length for error
-      Serial.printf("error: message length: %d does not match expected length: %d",
-                    readLength,
-                    expectedLength);
-      Serial.println();
-      return; // skip rest of function
+    // Display information
+    display.clearDisplay();
+    display.setCursor(0, 0);
+    for(int i = 0; i < strlen((char*)buffer); i++)
+    {
+      display.printf("%c", buffer[i]);
     }
+    
+    display.setCursor(0, 40);
+
+    display.display();
 
     StaticJsonDocument<1000> doc;
     // Deserialize the JSON document
-    DeserializationError error = deserializeJson(doc, loraBuffer);
+    DeserializationError error = deserializeJson(doc, buffer);
 
     // Test if parsing succeeds.
     if (error)
@@ -122,38 +107,9 @@ void loop()
       return;
     }
 
+    serializeJsonPretty(doc, Serial);
     Serial.println();
 
-    Serial.printf("Received from: 0x%4x", sender);
-    Serial.println();    Serial.println(doc["d"]);
-    Serial.printf("Message from payload: %d", expectedLength);
-    Serial.println();
-    Serial.printf("Message length read: %d", readLength);
-    Serial.println();
-    Serial.println();
-    Serial.printf("RSSI: %d", LoRa.packetRssi());
-    Serial.println();
-    Serial.printf("Snr: %d", LoRa.packetSnr());
-    Serial.println();
-    Serial.println();
-
-    // Display information
-    display.clearDisplay();
-    display.setCursor(0, 0);
-    display.print("LORA RECEIVER");
-    display.setCursor(0, 10);
-    display.print("RSSI:");
-    display.setCursor(40, 10);
-    display.print(LoRa.packetRssi());
-    display.setCursor(0, 20);
-    display.print("Sender: ");
-    display.setCursor(40, 20);
-    display.printf("%4x", sender);
-    display.setCursor(0, 30);
-    display.printf("%s", loraBuffer);
-    display.setCursor(0, 40);
-
-    display.display();
+    
   }
-  delay(200);
 }

@@ -41,10 +41,10 @@ Pranav Cherukupalli <cherukupallip@gmail.com>
 // GPIO 2
 #define INPUT_MOTION 2
 // letterbox door, we want to wire it with pull up resistor to have HIGH when door is open (switch open)
-#define INPUT_DOOR 15
+#define INPUT_DOOR 34
 
-#define WAKEUP_BITMASK_INPUT_MOTION (1 << (INPUT_MOTION - 1))
-#define WAKEUP_BITMASK_INPUT_DOOR (1 << (INPUT_DOOR - 1))
+const uint64_t WAKEUP_BITMASK_INPUT_MOTION =  (1 << (INPUT_MOTION - 1));
+const uint64_t WAKEUP_BITMASK_INPUT_DOOR = (1 << (INPUT_DOOR - 1));
 
 #define WAKEUP_BITMASK (WAKEUP_BITMASK_INPUT_MOTION | WAKEUP_BITMASK_INPUT_DOOR)
 
@@ -55,6 +55,9 @@ RTC_DATA_ATTR int bootCount = 0;
 Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire); //, OLED_RST);
 uint16_t msgCounter = 0;
 uint32_t loraIdentifier = 0xDEADBEEF;
+
+bool ledState = false;
+bool doorOpen = false;
 
 void resetDisplay()
 {
@@ -110,20 +113,24 @@ void sendLoRaMsg()
 {
   // Identifier:uint16, payloadsize:uint16t, payload
   uint8_t buffer[1000];
+  char str[] = "This is an amazing data message";
   LoRa.beginPacket();
   LoRa.write((uint8_t*)(&loraIdentifier),sizeof(loraIdentifier));
 
+
   StaticJsonDocument<1000> doc;
   // Add values in the document
-  //
-  doc["d"] = "on";   // off = closed
-  doc["m"] = "on"; // off = clear
-  doc["c"] = msgCounter;
+  
+  doc["door"] = (!doorOpen) ? "on" : "off";   // off = closed
+  doc["motion"] = "on"; // off = clear
+  doc["motion"] = "on"; // off = clear
+  doc["counter"] = msgCounter;
   uint16_t length = (uint16_t)serializeJson(doc, buffer, sizeof(buffer));
   // write number of bytes for payload
   LoRa.write((uint8_t*)(&length), sizeof(length));
   // write buffer
   LoRa.write(buffer, length);
+  //LoRa.write((uint8_t*)str, (size_t) strlen(str));
   // send it out
   LoRa.endPacket();
 
@@ -189,7 +196,7 @@ void print_GPIO_wake_up()
 void setup()
 {
   pinMode(LED_BUILTIN, OUTPUT);
-
+  pinMode(INPUT_DOOR, INPUT);
   Serial.begin(115200);
   delay(1000); // Take some time to open up the Serial Monitor
   initDisplay();
@@ -223,20 +230,29 @@ void setup()
     Serial.println("Failed to configure ext1 with the given parameters");
   }
 
+
+}
+
+void goToSleep()
+{
   // Go to sleep now
   Serial.println("Going to sleep now");
-  delay(1000);
-  // esp_deep_sleep_start();
+  esp_deep_sleep_start();
   // Serial.println("This will never be printed");
 }
-bool ledState = false;
+
 void loop()
 {
-  Serial.println("Sending Message");
-  sendLoRaMsg();
-  Serial.println("Finished sending Message");
+    // read ios
+  doorOpen = digitalRead(INPUT_DOOR);
+
+  //Serial.println("Sending Message");
+  //sendLoRaMsg();
+  //Serial.println("Finished sending Message");
   msgCounter++;
-  ledState = !ledState;
+  //ledState = !ledState;
+  ledState = doorOpen;
   digitalWrite(LED_BUILTIN, ledState);
-  delay(5000);
+  //delay(1000);
+  //goToSleep();
 }
