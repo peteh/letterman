@@ -1,159 +1,408 @@
-/*********
-  Rui Santos
-  Complete project details at https://RandomNerdTutorials.com/ttgo-lora32-sx1276-arduino-ide/
-*********/
-#include <ArduinoJson.h>
-
-// Libraries for LoRa
-#include <SPI.h>
-#include <LoRa.h>
-
-// Libraries for OLED Display
+/*
+   RadioLib SX127x Receive Example
+   This example listens for LoRa transmissions using SX127x Lora modules.
+   To successfully receive data, the following settings have to be the same
+   on both transmitter and receiver:
+    - carrier frequency
+    - bandwidth
+    - spreading factor
+    - coding rate
+    - sync word
+    - preamble length
+   Other modules from SX127x/RFM9x family can also be used.
+   For default module settings, see the wiki page
+   https://github.com/jgromes/RadioLib/wiki/Default-configuration#sx127xrfm9x---lora-modem
+   For full API reference, see the GitHub Pages
+   https://jgromes.github.io/RadioLib/
+*/
+#include <RadioLib.h>
 #include <Wire.h>
-#include <Adafruit_GFX.h>
-#include <Adafruit_SSD1306.h>
+#include <U8g2lib.h>
+#include <SPI.h>
+#include <WiFi.h>
+#include <WiFiUdp.h>
+#include <PubSubClient.h>
+#include <ArduinoOTA.h>
+#include <MqttDevice.h>
+#include "utils.h"
+#include "config.h"
 
-// define the pins used by the LoRa transceiver module
-#define SCK 5
-#define MISO 19
-#define MOSI 27
-#define RST 14
-#define DIO0 26
+#define LORA_FREQ 868.0
 
-// 433E6 for Asia
-// 866E6 for Europe
-// 915E6 for North America
-#define BAND 866E6
+U8G2_SSD1306_128X64_NONAME_F_HW_I2C *u8g2 = nullptr;
 
-// OLED pins
-#define SCREEN_WIDTH 128 // OLED display width, in pixels
-#define SCREEN_HEIGHT 64 // OLED display height, in pixels
+SX1276 radio = new Module(LORA_CS, LORA_IRQ, LORA_RST);
 
-Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RST);
+WiFiClient net;
+PubSubClient client(net);
+const char *HOMEASSISTANT_STATUS_TOPIC = "homeassistant/status";
+const char *HOMEASSISTANT_STATUS_TOPIC_ALT = "ha/status";
+
+MqttDevice mqttDevice(composeClientID().c_str(), "Letterman", "Letterman-Lora", "maker_pt");
+MqttBinarySensor mqttNewMailSensor(&mqttDevice, "letterman_new_mail", "New Mail");
+bool g_newMail = false;
+
+// flag to indicate that a packet was received
+volatile bool g_receivedFlag = false;
+
+// disable interrupt when it's not needed
+volatile bool g_enableInterrupt = true;
+
+// this function is called when a complete packet
+// is received by the module
+// IMPORTANT: this function MUST be 'void' type
+//            and MUST NOT have any arguments!
+void setFlag(void)
+{
+  // check if the interrupt is enabled
+  if (!g_enableInterrupt)
+  {
+    return;
+  }
+
+  // we got a packet, set the flag
+  g_receivedFlag = true;
+}
+
+
+void publishConfig(MqttEntity *entity)
+{
+  String payload = entity->getHomeAssistantConfigPayload();
+  char topic[255];
+  entity->getHomeAssistantConfigTopic(topic, sizeof(topic));
+  client.publish(topic, payload.c_str());
+
+  entity->getHomeAssistantConfigTopicAlt(topic, sizeof(topic));
+  client.publish(topic,
+                 payload.c_str());
+}
+
+void publishNewMailSensor()
+{
+  client.publish(mqttNewMailSensor.getStateTopic(), (g_newMail ? "on" : "off"));
+}
+
+
+void connectToMqtt()
+{
+  log_i("connecting to MQTT...");
+  // TODO: add security settings back to mqtt
+  // while (!client.connect(mqtt_client, mqtt_user, mqtt_pass))
+  for (int i = 0; i < 3 && !client.connect(composeClientID().c_str()); i++)
+  {
+    Serial.print(".");
+    delay(3000);
+  }
+  client.subscribe(HOMEASSISTANT_STATUS_TOPIC);
+  client.subscribe(HOMEASSISTANT_STATUS_TOPIC_ALT);
+
+  publishConfig(&mqttNewMailSensor);
+  publishNewMailSensor();
+}
+
+void connectToWifi()
+{
+  log_i("Connecting to wifi...");
+  WiFi.begin(wifi_ssid, wifi_pass);
+  // TODO: really forever? What if we want to go back to autoconnect?
+  while (WiFi.status() != WL_CONNECTED)
+  {
+    Serial.print(".");
+    delay(1000);
+  }
+  log_i("\n Wifi connected!");
+}
+
+void initBoard()
+{
+  Serial.begin(115200);
+  Serial.println("initBoard");
+
+  SPI.begin(LORA_SCK, LORA_MISO, LORA_MOSI, LORA_CS);
+  Serial.println("SPI init done");
+  Wire.begin(OLED_SDA, OLED_SCL);
+  Serial.println("Oled init done");
+
+  /**
+  pinMode(OLED_RST, OUTPUT);
+  digitalWrite(OLED_RST, HIGH); delay(20);
+  digitalWrite(OLED_RST, LOW);  delay(20);
+  digitalWrite(OLED_RST, HIGH); delay(20);
+
+  Serial.println("Oled RST done");
+  */
+  Wire.beginTransmission(0x3C);
+  if (Wire.endTransmission() == 0)
+  {
+    Serial.println("Started OLED");
+    u8g2 = new U8G2_SSD1306_128X64_NONAME_F_HW_I2C(U8G2_R0, U8X8_PIN_NONE);
+    u8g2->begin();
+    u8g2->clearBuffer();
+    u8g2->setFlipMode(0);
+    u8g2->setFontMode(1); // Transparent
+    u8g2->setDrawColor(1);
+    u8g2->setFontDirection(0);
+    u8g2->firstPage();
+    do
+    {
+      u8g2->setFont(u8g2_font_inb19_mr);
+      u8g2->drawStr(0, 30, "LilyGo");
+      u8g2->drawHLine(2, 35, 47);
+      u8g2->drawHLine(3, 36, 47);
+      u8g2->drawVLine(45, 32, 12);
+      u8g2->drawVLine(46, 33, 12);
+      u8g2->setFont(u8g2_font_inb19_mf);
+      u8g2->drawStr(58, 60, "LoRa");
+    } while (u8g2->nextPage());
+    u8g2->sendBuffer();
+    u8g2->setFont(u8g2_font_fur11_tf);
+    delay(500);
+  }
+  Serial.println("Display logo done");
+
+  if (u8g2)
+  {
+    u8g2->clearBuffer();
+    do
+    {
+      u8g2->setCursor(0, 16);
+      u8g2->println("Waiting to receive data");
+      ;
+    } while (u8g2->nextPage());
+  }
+  Serial.println("Initboard done");
+}
+
+void callback(char *topic, byte *payload, unsigned int length)
+{
+  log_d("Mqtt msg arrived [%s]", topic);
+  
+
+  // publish config when homeassistant comes online and needs the configuration again
+  if (strcmp(topic, HOMEASSISTANT_STATUS_TOPIC) == 0 ||
+           strcmp(topic, HOMEASSISTANT_STATUS_TOPIC_ALT) == 0)
+  {
+    if (strncmp((char *)payload, "online", length) == 0)
+    {
+      publishConfig(&mqttNewMailSensor);
+      delay(200);
+      publishNewMailSensor();
+    }
+  }
+}
 
 void setup()
 {
-  // initialize OLED
-  Wire.begin(OLED_SDA, OLED_SCL);
-  if (!display.begin(SSD1306_SWITCHCAPVCC, 0x3c, false, false))
-  { // Address 0x3C for 128x32
-    Serial.println(F("SSD1306 allocation failed"));
-    for (;;)
-      ; // Don't proceed, loop forever
+  mqttNewMailSensor.setIcon("mdi:mail");
+  initBoard();
+  // When the power is turned on, a delay is required.
+  delay(1500);
+  int state = radio.begin(LORA_FREQ);
+  if (u8g2)
+  {
+    if (state != RADIOLIB_ERR_NONE)
+    {
+      u8g2->clearBuffer();
+      u8g2->drawStr(0, 12, "Initializing: FAIL!");
+      u8g2->sendBuffer();
+    }
   }
 
-  display.clearDisplay();
-  display.setTextColor(WHITE);
-  display.setTextSize(1);
-  display.setCursor(0, 0);
-  display.print("LORA RECEIVER ");
-  display.display();
-
-  // initialize Serial Monitor
-  Serial.begin(115200);
-
-  // SPI LoRa pins
-  SPI.begin(LORA_SCK, LORA_MISO, LORA_MOSI, LORA_CS);
-  // setup LoRa transceiver module
-  LoRa.setPins(LORA_CS, LORA_RST, LORA_IRQ);
-
-  if (!LoRa.begin(BAND))
+  if (state == RADIOLIB_ERR_NONE)
   {
-    Serial.println("Starting LoRa failed!");
-    while (1)
+    Serial.println(F("success!"));
+  }
+  else
+  {
+    Serial.print(F("failed, code "));
+    Serial.println(state);
+    while (true)
       ;
   }
-  // Serial.println("LoRa Initializing OK!");
-  display.setCursor(0, 10);
-  display.println("LoRa Initializing OK!");
-  display.display();
+  // set the function that will be called
+  // when new packet is received
+  radio.setDio0Action(setFlag);
+
+  // start listening for LoRa packets
+  Serial.print(F("[SX1278] Starting to listen ... "));
+  state = radio.startReceive();
+  if (state == RADIOLIB_ERR_NONE)
+  {
+    Serial.println(F("success!"));
+  }
+  else
+  {
+    Serial.print(F("failed, code "));
+    Serial.println(state);
+    while (true)
+      ;
+  }
+
+  // if needed, 'listen' mode can be disabled by calling
+  // any of the following methods:
+  //
+  // radio.standby()
+  // radio.sleep()
+  // radio.transmit();
+  // radio.receive();
+  // radio.readData();
+  // radio.scanChannel();
+
+  WiFi.mode(WIFI_STA);
+  WiFi.hostname(composeClientID().c_str());
+  WiFi.setAutoConnect(true);
+  WiFi.begin(wifi_ssid, wifi_pass);
+
+  connectToWifi();
+  ArduinoOTA.onStart([]()
+                     {
+    String type;
+    if (ArduinoOTA.getCommand() == U_FLASH) {
+      type = "sketch";
+    } else { // U_FS
+      type = "filesystem";
+    }
+
+    // NOTE: if updating FS this would be the place to unmount FS using FS.end()
+    log_i("Start updating %s", type); });
+
+  ArduinoOTA.onEnd([]()
+                   { log_i("End Update"); });
+
+  ArduinoOTA.onProgress([](unsigned int progress, unsigned int total)
+                        { Serial.printf("Progress: %u%%\r", (progress / (total / 100))); });
+
+  ArduinoOTA.onError([](ota_error_t error)
+                     {
+    log_e("Error[%u]: ", error);
+    if (error == OTA_AUTH_ERROR) {
+      log_e("Arduino OTA: Auth Failed");
+    } else if (error == OTA_BEGIN_ERROR) {
+      log_e("Arduino OTA: Begin Failed");
+    } else if (error == OTA_CONNECT_ERROR) {
+      log_e("Arduino OTA: Connect Failed");
+    } else if (error == OTA_RECEIVE_ERROR) {
+      log_e("Arduino OTA: Receive Failed");
+    } else if (error == OTA_END_ERROR) {
+      log_e("Arduino OTA: End Failed");
+    } });
+
+  ArduinoOTA.begin();
+
+  log_i("Connected to SSID: %s", wifi_ssid);
+  log_i("IP address: %s", WiFi.localIP());
+
+  client.setBufferSize(512);
+  client.setServer(mqtt_server, mqtt_port);
+  client.setCallback(callback);
+}
+
+bool processIncomingLora()
+{
+  if (!g_receivedFlag)
+  {
+    return false;
+  }
+
+  // disable the interrupt service routine while
+  // processing the data
+  g_enableInterrupt = false;
+
+  // reset flag
+  g_receivedFlag = false;
+
+  // you can read received data as an Arduino String
+  String str;
+  int state = radio.readData(str);
+
+  // you can also read received data as byte array
+  /*
+    byte byteArr[8];
+    int state = radio.readData(byteArr, 8);
+  */
+  bool success = false;
+
+  if (state == RADIOLIB_ERR_NONE)
+  {
+    // packet was successfully received
+    Serial.println(F("[SX1278] Received packet!"));
+
+    // print data of the packet
+    Serial.print(F("[SX1278] Data:\t\t"));
+    Serial.println(str);
+
+    StaticJsonDocument<1000> doc;
+    // TODO: error handling
+    deserializeJson(doc, str);
+    g_newMail = strcmp(doc["newmail"], "on") == 0;
+    success = true;
+
+    // print RSSI (Received Signal Strength Indicator)
+    Serial.print(F("[SX1278] RSSI:\t\t"));
+    Serial.print(radio.getRSSI());
+    Serial.println(F(" dBm"));
+
+    // print SNR (Signal-to-Noise Ratio)
+    Serial.print(F("[SX1278] SNR:\t\t"));
+    Serial.print(radio.getSNR());
+    Serial.println(F(" dB"));
+
+    // print frequency error
+    Serial.print(F("[SX1278] Frequency error:\t"));
+    Serial.print(radio.getFrequencyError());
+    Serial.println(F(" Hz"));
+
+    if (u8g2)
+    {
+      u8g2->clearBuffer();
+      char buf[256];
+      u8g2->drawStr(0, 12, "Received OK!");
+      u8g2->drawStr(5, 26, str.c_str());
+      snprintf(buf, sizeof(buf), "RSSI:%.2f", radio.getRSSI());
+      u8g2->drawStr(0, 40, buf);
+      snprintf(buf, sizeof(buf), "SNR:%.2f", radio.getSNR());
+      u8g2->drawStr(0, 54, buf);
+      u8g2->sendBuffer();
+    }
+  }
+  else if (state == RADIOLIB_ERR_CRC_MISMATCH)
+  {
+    // packet was received, but is malformed
+    Serial.println(F("[SX1278] CRC error!"));
+  }
+  else
+  {
+    // some other error occurred
+    Serial.print(F("[SX1278] Failed, code "));
+    Serial.println(state);
+  }
+
+  // put module back to listen mode
+  radio.startReceive();
+
+  // we're ready to receive more packets,
+  // enable interrupt service routine
+  g_enableInterrupt = true;
+  return success;
 }
 
 void loop()
 {
-  // try to parse packet
-  int packetSize = LoRa.parsePacket();
-
-  if (packetSize > sizeof(uint16_t) + sizeof(uint16_t))
+  if (WiFi.status() != WL_CONNECTED)
   {
-    // received a packet
-    Serial.println("Received packet: ");
-    // read packet header bytes:
-
-    uint32_t sender;
-    LoRa.readBytes((uint8_t *)(&sender), sizeof(sender)); // recipient address
-
-    uint16_t expectedLength;
-    LoRa.readBytes((uint8_t *)(&expectedLength), sizeof(expectedLength)); // incoming msg length
-
-    uint8_t loraBuffer[1000];
-    loraBuffer[0] = 0;
-    uint16_t readLength = 0;
-    readLength = LoRa.readBytes(loraBuffer, expectedLength);
-    /*
-    while (LoRa.available())
-    {
-      uint8_t data = LoRa.read();
-      loraBuffer[readLength] = data;
-      readLength++;
-      // LoRaData += (char)data;
-    }
-    */
-    loraBuffer[readLength] = 0;
-
-    if (expectedLength != readLength)
-    { // check length for error
-      Serial.printf("error: message length: %d does not match expected length: %d",
-                    readLength,
-                    expectedLength);
-      Serial.println();
-      return; // skip rest of function
-    }
-
-    StaticJsonDocument<1000> doc;
-    // Deserialize the JSON document
-    DeserializationError error = deserializeJson(doc, loraBuffer);
-
-    // Test if parsing succeeds.
-    if (error)
-    {
-      Serial.print(F("deserializeJson() failed: "));
-      Serial.println(error.f_str());
-      return;
-    }
-
-    Serial.println();
-
-    Serial.printf("Received from: 0x%4x", sender);
-    Serial.println();    Serial.println(doc["d"]);
-    Serial.printf("Message from payload: %d", expectedLength);
-    Serial.println();
-    Serial.printf("Message length read: %d", readLength);
-    Serial.println();
-    Serial.println();
-    Serial.printf("RSSI: %d", LoRa.packetRssi());
-    Serial.println();
-    Serial.printf("Snr: %d", LoRa.packetSnr());
-    Serial.println();
-    Serial.println();
-
-    // Display information
-    display.clearDisplay();
-    display.setCursor(0, 0);
-    display.print("LORA RECEIVER");
-    display.setCursor(0, 10);
-    display.print("RSSI:");
-    display.setCursor(40, 10);
-    display.print(LoRa.packetRssi());
-    display.setCursor(0, 20);
-    display.print("Sender: ");
-    display.setCursor(40, 20);
-    display.printf("%4x", sender);
-    display.setCursor(0, 30);
-    display.printf("%s", loraBuffer);
-    display.setCursor(0, 40);
-
-    display.display();
+    log_w("WiFi not connected, trying to reconnect, state: %d", WiFi.status());
+    WiFi.reconnect();
   }
-  delay(200);
+
+  if (!client.connected())
+  {
+    log_w("Mqtt not connected, trying to reconnect");
+    connectToMqtt();
+  }
+  client.loop();
+  ArduinoOTA.handle();
+  if(processIncomingLora())
+  {
+    publishNewMailSensor();
+  }
 }
