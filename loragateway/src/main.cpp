@@ -39,8 +39,14 @@ const char *HOMEASSISTANT_STATUS_TOPIC = "homeassistant/status";
 const char *HOMEASSISTANT_STATUS_TOPIC_ALT = "ha/status";
 
 MqttDevice mqttDevice(composeClientID().c_str(), "Letterman", "Letterman-Lora", "maker_pt");
-MqttBinarySensor mqttNewMailSensor(&mqttDevice, "letterman_new_mail", "New Mail");
+
+MqttBinarySensor mqttNewMailSensor(&mqttDevice, "letterman_new_mail", "Mailbox New Mail");
+MqttBinarySensor mqttDoorSensor(&mqttDevice, "letterman_door", "Mailbox Door");
+MqttBinarySensor mqttMotionSensor(&mqttDevice, "letterman_motion", "Mailbox Motion");
+
 bool g_newMail = false;
+bool g_sensorMotionDetected = false;
+bool g_sensorDoorOpen = false;
 
 // flag to indicate that a packet was received
 volatile bool g_receivedFlag = false;
@@ -64,7 +70,6 @@ void setFlag(void)
   g_receivedFlag = true;
 }
 
-
 void publishConfig(MqttEntity *entity)
 {
   String payload = entity->getHomeAssistantConfigPayload();
@@ -77,11 +82,36 @@ void publishConfig(MqttEntity *entity)
                  payload.c_str());
 }
 
-void publishNewMailSensor()
+void publishConfig()
 {
-  client.publish(mqttNewMailSensor.getStateTopic(), (g_newMail ? "on" : "off"));
+  publishConfig(&mqttNewMailSensor);
+  publishConfig(&mqttDoorSensor);
+  publishConfig(&mqttMotionSensor);
 }
 
+
+
+void publishNewMailSensor()
+{
+  client.publish(mqttNewMailSensor.getStateTopic(), (g_newMail ? mqttNewMailSensor.getOnState() : mqttNewMailSensor.getOffState()));
+}
+
+void publishDoorSensor()
+{
+  client.publish(mqttDoorSensor.getStateTopic(), (g_sensorDoorOpen ? mqttDoorSensor.getOnState() : mqttDoorSensor.getOffState()));
+}
+
+void publishMotionSensor()
+{
+  client.publish(mqttMotionSensor.getStateTopic(), (g_sensorMotionDetected ? mqttMotionSensor.getOnState() : mqttMotionSensor.getOffState()));
+}
+
+void publishSensors()
+{
+  publishNewMailSensor();
+  publishDoorSensor();
+  publishMotionSensor();
+}
 
 void connectToMqtt()
 {
@@ -96,8 +126,9 @@ void connectToMqtt()
   client.subscribe(HOMEASSISTANT_STATUS_TOPIC);
   client.subscribe(HOMEASSISTANT_STATUS_TOPIC_ALT);
 
-  publishConfig(&mqttNewMailSensor);
-  publishNewMailSensor();
+  publishConfig();
+  delay(200);
+  publishSensors();
 }
 
 void connectToWifi()
@@ -184,9 +215,9 @@ void callback(char *topic, byte *payload, unsigned int length)
   {
     if (strncmp((char *)payload, "online", length) == 0)
     {
-      publishConfig(&mqttNewMailSensor);
+      publishConfig();
       delay(200);
-      publishNewMailSensor();
+      publishSensors();
     }
   }
 }
@@ -194,6 +225,7 @@ void callback(char *topic, byte *payload, unsigned int length)
 void setup()
 {
   mqttNewMailSensor.setIcon("mdi:mail");
+  mqttDoorSensor.setDeviceClass("door");
   initBoard();
   // When the power is turned on, a delay is required.
   delay(1500);
@@ -290,7 +322,7 @@ void setup()
   ArduinoOTA.begin();
 
   log_i("Connected to SSID: %s", wifi_ssid);
-  log_i("IP address: %s", WiFi.localIP());
+  //log_i("IP address: %s", WiFi.localIP());
 
   client.setBufferSize(512);
   client.setServer(mqtt_server, mqtt_port);
@@ -335,6 +367,8 @@ bool processIncomingLora()
     // TODO: error handling
     deserializeJson(doc, str);
     g_newMail = strcmp(doc["newmail"], "on") == 0;
+    g_sensorDoorOpen = strcmp(doc["door"], "open") == 0;
+    g_sensorMotionDetected = strcmp(doc["motion"], "on") == 0;
     success = true;
 
     // print RSSI (Received Signal Strength Indicator)
@@ -403,6 +437,6 @@ void loop()
   ArduinoOTA.handle();
   if(processIncomingLora())
   {
-    publishNewMailSensor();
+    publishSensors();
   }
 }

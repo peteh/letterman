@@ -18,7 +18,7 @@ String composeClientID()
 {
     uint8_t mac[6];
     WiFi.macAddress(mac);
-    String clientId = "lock-";
+    String clientId = "letterman-";
     clientId += macToStr(mac);
     return clientId;
 }

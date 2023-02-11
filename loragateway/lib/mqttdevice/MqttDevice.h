@@ -330,7 +330,6 @@ public:
 protected:
     virtual void addConfig(DynamicJsonDocument &doc)
     {
-        Serial.print("Adding config for Lock");
         doc["payload_lock"] = m_cmdLock;
         doc["payload_unlock"] = m_cmdUnlock;
         doc["payload_open"] = m_cmdOpen;
@@ -387,9 +386,19 @@ public:
         return m_stateOpening;
     }
 
+    const char *getOpenState()
+    {
+        return m_stateOpen;
+    }
+
     const char *getClosingState()
     {
         return m_stateClosing;
+    }
+
+    const char *getClosedState()
+    {
+        return m_stateClosed;
     }
 
     const char *getStoppedState()
@@ -400,7 +409,6 @@ public:
 protected:
     virtual void addConfig(DynamicJsonDocument &doc)
     {
-        Serial.print("Adding config for Cover");
         doc["payload_open"] = m_cmdOpen;
         doc["payload_close"] = m_cmdClose;
         doc["payload_stop"] = m_cmdStop;
@@ -420,9 +428,11 @@ private:
     const char *m_cmdClose = "close";
     const char *m_cmdStop = "stop";
 
+    const char *m_stateOpen = "open";
     const char *m_stateOpening = "opening";
     const char *m_stateClosing = "closing";
     const char *m_stateStopped = "stopped";
+    const char *m_stateClosed = "closed";
 
     const uint8_t m_positionOpen = 100;
     const uint8_t m_positionClosed = 0;
