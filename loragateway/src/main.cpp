@@ -43,10 +43,12 @@ MqttDevice mqttDevice(composeClientID().c_str(), "Letterman", "Letterman-Lora", 
 MqttBinarySensor mqttNewMailSensor(&mqttDevice, "letterman_new_mail", "Mailbox New Mail");
 MqttBinarySensor mqttDoorSensor(&mqttDevice, "letterman_door", "Mailbox Door");
 MqttBinarySensor mqttMotionSensor(&mqttDevice, "letterman_motion", "Mailbox Motion");
+MqttBinarySensor mqttVibrationSensor(&mqttDevice, "letterman_vibration", "Mailbox Vibration");
 
 bool g_newMail = false;
 bool g_sensorMotionDetected = false;
 bool g_sensorDoorOpen = false;
+bool g_sensorVibrationDetected = false;
 
 // flag to indicate that a packet was received
 volatile bool g_receivedFlag = false;
@@ -87,6 +89,7 @@ void publishConfig()
   publishConfig(&mqttNewMailSensor);
   publishConfig(&mqttDoorSensor);
   publishConfig(&mqttMotionSensor);
+  publishConfig(&mqttVibrationSensor);
 }
 
 
@@ -106,11 +109,17 @@ void publishMotionSensor()
   client.publish(mqttMotionSensor.getStateTopic(), (g_sensorMotionDetected ? mqttMotionSensor.getOnState() : mqttMotionSensor.getOffState()));
 }
 
+void publishVibrationSensor()
+{
+  client.publish(mqttVibrationSensor.getStateTopic(), (g_sensorVibrationDetected ? mqttVibrationSensor.getOnState() : mqttVibrationSensor.getOffState()));
+}
+
 void publishSensors()
 {
   publishNewMailSensor();
   publishDoorSensor();
   publishMotionSensor();
+  publishVibrationSensor();
 }
 
 void connectToMqtt()
@@ -226,6 +235,8 @@ void setup()
 {
   mqttNewMailSensor.setIcon("mdi:mail");
   mqttDoorSensor.setDeviceClass("door");
+  mqttMotionSensor.setDeviceClass("motion");
+  mqttVibrationSensor.setDeviceClass("vibration");
   initBoard();
   // When the power is turned on, a delay is required.
   delay(1500);
@@ -366,9 +377,10 @@ bool processIncomingLora()
     StaticJsonDocument<1000> doc;
     // TODO: error handling
     deserializeJson(doc, str);
-    g_newMail = strcmp(doc["newmail"], "on") == 0;
-    g_sensorDoorOpen = strcmp(doc["door"], "open") == 0;
-    g_sensorMotionDetected = strcmp(doc["motion"], "on") == 0;
+    //g_newMail = strcmp(doc["newmail"], "on") == 0;
+    g_sensorDoorOpen = doc["d"] == 1;
+    g_sensorMotionDetected = doc["m"] == 1;
+    g_sensorVibrationDetected = doc["v"] == 1;
     success = true;
 
     // print RSSI (Received Signal Strength Indicator)
@@ -391,7 +403,8 @@ bool processIncomingLora()
       u8g2->clearBuffer();
       char buf[256];
       u8g2->drawStr(0, 12, "Received OK!");
-      u8g2->drawStr(5, 26, str.c_str());
+      snprintf(buf, sizeof(buf), "d:%d m:%d v:%d", g_sensorDoorOpen, g_sensorMotionDetected, g_sensorVibrationDetected);
+      u8g2->drawStr(5, 26, buf);
       snprintf(buf, sizeof(buf), "RSSI:%.2f", radio.getRSSI());
       u8g2->drawStr(0, 40, buf);
       snprintf(buf, sizeof(buf), "SNR:%.2f", radio.getSNR());
