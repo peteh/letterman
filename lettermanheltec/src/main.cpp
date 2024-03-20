@@ -10,16 +10,9 @@
 #include <Wire.h>
 #include <RadioLib.h>
 #include <ArduinoJson.h>
+#include <esplog.h>
 
-#define LORA_MOSI 10
-#define LORA_MISO 11
-#define LORA_SCK 9
-
-#define LORA_CS 8
-#define LORA_IRQ 14
-#define LORA_RST 12
-#define LORA_BUSY 13
-#define LORA_FREQ 868.
+#include "platform.h"
 
 #define LED 35
 // letterbox door, we want to wire it with pull up resistor to have HIGH when door is open (switch open)
@@ -28,7 +21,9 @@
 // GPIO 2
 #define INPUT_MOTION 6
 
-#define WAKEUP_BITMASK (1<<INPUT_MOTION | 1 << INPUT_DOOR)
+#define INPUT_VIBRATION 5
+
+#define WAKEUP_BITMASK (1 << INPUT_VIBRATION | 1 << INPUT_MOTION | 1 << INPUT_DOOR)
 
 RTC_DATA_ATTR int bootCount = 0;
 
@@ -36,7 +31,14 @@ SX1262 g_radio = new Module(LORA_CS, LORA_IRQ, LORA_RST, LORA_BUSY);
 uint16_t g_msgCounter = 0;
 bool g_doorOpen = false;
 bool g_motionDetected = false;
+bool g_vibrationDetected = false;
 bool g_newMail = true;
+
+bool g_wakeup_door = false;
+bool g_wakeup_motion = false;
+bool g_wakeup_vibration = false;
+
+bool g_ledState = false;
 
 void initRadio()
 {
@@ -93,7 +95,7 @@ void print_wakeup_reason()
 /*
 Method to print the GPIO that triggered the wakeup
 */
-void print_GPIO_wake_up()
+void detect_gpio_wakeup()
 {
   uint64_t GPIO_reason = esp_sleep_get_ext1_wakeup_status();
   Serial.print("GPIO that triggered the wake up: GPIO ");
@@ -101,12 +103,20 @@ void print_GPIO_wake_up()
 
   if (GPIO_reason & (1 << INPUT_DOOR))
   {
+    g_wakeup_door = true;
     Serial.println("Door was opened");
   }
 
   if (GPIO_reason & (1 << INPUT_MOTION))
   {
+    g_wakeup_motion = true;
     Serial.println("Motion was triggered");
+  }
+
+  if (GPIO_reason & (1 << INPUT_VIBRATION))
+  {
+    g_wakeup_vibration = true;
+    Serial.println("Vibration was triggered");
   }
 }
 
@@ -116,6 +126,7 @@ void setup()
   pinMode(LED, OUTPUT);
   pinMode(INPUT_DOOR, INPUT);
   pinMode(INPUT_MOTION, INPUT);
+  pinMode(INPUT_VIBRATION, INPUT);
   initRadio();
   // Increment boot number and print it every reboot
   ++bootCount;
@@ -125,7 +136,7 @@ void setup()
   print_wakeup_reason();
 
   // Print the GPIO used to wake up
-  print_GPIO_wake_up();
+  detect_gpio_wakeup();
 
   /*
   First we configure the wake up source
@@ -150,9 +161,13 @@ void setup()
   {
     Serial.println("Failed to configure ext1 with the given parameters");
   }
+
+  g_doorOpen = g_wakeup_door | digitalRead(INPUT_DOOR);
+  g_motionDetected = g_wakeup_motion | digitalRead(INPUT_MOTION);
+  g_vibrationDetected = g_wakeup_vibration | digitalRead(INPUT_VIBRATION);
 }
 
-void sendLoRaMsg()
+void sendLoRaMsg(bool doorOpen, bool motionDetected, bool vibrationDetected, bool newMail)
 {
   Serial.print(F("[SX1262] Transmitting packet ... "));
   // Identifier:uint16, payloadsize:uint16t, payload
@@ -163,9 +178,10 @@ void sendLoRaMsg()
   StaticJsonDocument<1000> doc;
   // Add values in the document
   //
-  doc["door"] = (g_doorOpen ? "open" : "closed"); // off = closed
-  doc["motion"] = (g_motionDetected) ? "on" : "off";  // off = clear
-  doc["newmail"] = (g_newMail) ? "on" : "off";  // off = clear
+  doc["d"] = (doorOpen ? 1 : 0); // door: 1 = open, 0 = closed
+  doc["m"] = (motionDetected) ? 1 : 0;  // motion: 1 = motion, 0 = clear
+  doc["v"] = (vibrationDetected) ? 1 : 0;  // motion: 1 = motion, 0 = clear
+  doc["nm"] = (newMail) ? 1 : 0;  // 1: new mail, 0 = clear
   doc["c"] = g_msgCounter;
   uint16_t length = (uint16_t)serializeJson(doc, buffer, sizeof(buffer));
   // write number of bytes for payload
@@ -210,30 +226,37 @@ void sendLoRaMsg()
   Serial.println();
 }
 
-bool ledState = false;
+
 
 
 void loop()
 {
-  digitalWrite(LED, ledState);
-  ledState = !ledState;
-  g_doorOpen = digitalRead(INPUT_DOOR);
-  g_motionDetected = digitalRead(INPUT_MOTION);
+  digitalWrite(LED, g_ledState);
+  g_ledState = !g_ledState;
+  
   if(g_doorOpen)
   {
     g_newMail = false;
   }
   
   Serial.printf("Door open %d\n", g_doorOpen);
-  sendLoRaMsg();
+  Serial.printf("Motion %d\n", g_motionDetected);
+  Serial.printf("Vibration %d\n", g_vibrationDetected);
+  sendLoRaMsg(g_doorOpen, g_motionDetected, g_vibrationDetected, g_newMail);
+  delay(50);
+  sendLoRaMsg(g_doorOpen, g_motionDetected, g_vibrationDetected, g_newMail);
   // wait for a second before transmitting again
   // Go to sleep now
-  if (!g_doorOpen && !g_motionDetected)
+  if (!g_doorOpen && !g_motionDetected && !g_vibrationDetected)
   {
+    // TODO: check for other things that should be called to reach deep sleep
     Serial.println("Going to sleep now");
     delay(100);
     esp_deep_sleep_start();
   }
   // Serial.println("This will never be printed");
   delay(1000);
+  g_doorOpen = digitalRead(INPUT_DOOR);
+  g_motionDetected = digitalRead(INPUT_MOTION);
+  g_vibrationDetected = digitalRead(INPUT_VIBRATION);
 }
