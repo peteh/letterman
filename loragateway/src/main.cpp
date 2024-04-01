@@ -346,7 +346,7 @@ bool processIncomingLora()
   {
     return false;
   }
-
+  uint8_t buffer[1000];
   // disable the interrupt service routine while
   // processing the data
   g_enableInterrupt = false;
@@ -355,14 +355,9 @@ bool processIncomingLora()
   g_receivedFlag = false;
 
   // you can read received data as an Arduino String
-  String str;
-  int state = radio.readData(str);
+  uint16_t length = radio.getPacketLength();
+  int16_t state = radio.readData(buffer, sizeof(buffer));
 
-  // you can also read received data as byte array
-  /*
-    byte byteArr[8];
-    int state = radio.readData(byteArr, 8);
-  */
   bool success = false;
 
   if (state == RADIOLIB_ERR_NONE)
@@ -370,46 +365,58 @@ bool processIncomingLora()
     // packet was successfully received
     Serial.println(F("[SX1278] Received packet!"));
 
+    // TODO error handling and sanity checking: 
+    // header + defined length
     // print data of the packet
-    Serial.print(F("[SX1278] Data:\t\t"));
-    Serial.println(str);
+    //Serial.print(F("[SX1278] Data:\t\t"));
+    //Serial.println(str);
 
-    StaticJsonDocument<1000> doc;
-    // TODO: error handling
-    deserializeJson(doc, str);
     //g_newMail = strcmp(doc["newmail"], "on") == 0;
-    g_sensorDoorOpen = doc["d"] == 1;
-    g_sensorMotionDetected = doc["m"] == 1;
-    g_sensorVibrationDetected = doc["v"] == 1;
-    success = true;
-
-    // print RSSI (Received Signal Strength Indicator)
-    Serial.print(F("[SX1278] RSSI:\t\t"));
-    Serial.print(radio.getRSSI());
-    Serial.println(F(" dBm"));
-
-    // print SNR (Signal-to-Noise Ratio)
-    Serial.print(F("[SX1278] SNR:\t\t"));
-    Serial.print(radio.getSNR());
-    Serial.println(F(" dB"));
-
-    // print frequency error
-    Serial.print(F("[SX1278] Frequency error:\t"));
-    Serial.print(radio.getFrequencyError());
-    Serial.println(F(" Hz"));
-
-    if (u8g2)
+    if (length != 4)
     {
-      u8g2->clearBuffer();
-      char buf[256];
-      u8g2->drawStr(0, 12, "Received OK!");
-      snprintf(buf, sizeof(buf), "d:%d m:%d v:%d", g_sensorDoorOpen, g_sensorMotionDetected, g_sensorVibrationDetected);
-      u8g2->drawStr(5, 26, buf);
-      snprintf(buf, sizeof(buf), "RSSI:%.2f", radio.getRSSI());
-      u8g2->drawStr(0, 40, buf);
-      snprintf(buf, sizeof(buf), "SNR:%.2f", radio.getSNR());
-      u8g2->drawStr(0, 54, buf);
-      u8g2->sendBuffer();
+      Serial.println(F("[SX1278] Length error!"));
+    }
+    else if (buffer[0] != 'l' || buffer[1] != 'm')
+    {
+      Serial.println(F("[SX1278] Header error!"));
+    }
+    else
+    {
+      uint8_t status = buffer[2];
+
+      g_sensorDoorOpen = (status >> 0) & 1;
+      g_sensorMotionDetected = (status >> 1) & 1;
+      g_sensorVibrationDetected = (status >> 2) & 1;
+      success = true;
+
+      // print RSSI (Received Signal Strength Indicator)
+      Serial.print(F("[SX1278] RSSI:\t\t"));
+      Serial.print(radio.getRSSI());
+      Serial.println(F(" dBm"));
+
+      // print SNR (Signal-to-Noise Ratio)
+      Serial.print(F("[SX1278] SNR:\t\t"));
+      Serial.print(radio.getSNR());
+      Serial.println(F(" dB"));
+
+      // print frequency error
+      Serial.print(F("[SX1278] Frequency error:\t"));
+      Serial.print(radio.getFrequencyError());
+      Serial.println(F(" Hz"));
+
+      if (u8g2)
+      {
+        u8g2->clearBuffer();
+        char buf[256];
+        u8g2->drawStr(0, 12, "Received OK!");
+        snprintf(buf, sizeof(buf), "d:%d m:%d v:%d", g_sensorDoorOpen, g_sensorMotionDetected, g_sensorVibrationDetected);
+        u8g2->drawStr(5, 26, buf);
+        snprintf(buf, sizeof(buf), "RSSI:%.2f", radio.getRSSI());
+        u8g2->drawStr(0, 40, buf);
+        snprintf(buf, sizeof(buf), "SNR:%.2f", radio.getSNR());
+        u8g2->drawStr(0, 54, buf);
+        u8g2->sendBuffer();
+      }
     }
   }
   else if (state == RADIOLIB_ERR_CRC_MISMATCH)
