@@ -14,15 +14,6 @@
 
 #include "platform.h"
 
-#define LED 35
-// letterbox door, we want to wire it with pull up resistor to have HIGH when door is open (switch open)
-#define INPUT_DOOR 7
-
-// GPIO 2
-#define INPUT_MOTION 6
-
-#define INPUT_VIBRATION 5
-
 #define WAKEUP_BITMASK (1 << INPUT_VIBRATION | 1 << INPUT_MOTION | 1 << INPUT_DOOR)
 
 RTC_DATA_ATTR int bootCount = 0;
@@ -171,19 +162,19 @@ void sendLoRaMsg(bool doorOpen, bool motionDetected, bool vibrationDetected, boo
 {
   Serial.print(F("[SX1262] Transmitting packet ... "));
   // Identifier:uint16, payloadsize:uint16t, payload
-  uint8_t buffer[1000];
+  uint8_t buffer[4];
   // LoRa.beginPacket();
   // LoRa.write((uint8_t*)(&loraIdentifier),sizeof(loraIdentifier));
-
-  StaticJsonDocument<1000> doc;
-  // Add values in the document
-  //
-  doc["d"] = (doorOpen ? 1 : 0); // door: 1 = open, 0 = closed
-  doc["m"] = (motionDetected) ? 1 : 0;  // motion: 1 = motion, 0 = clear
-  doc["v"] = (vibrationDetected) ? 1 : 0;  // motion: 1 = motion, 0 = clear
-  doc["nm"] = (newMail) ? 1 : 0;  // 1: new mail, 0 = clear
-  doc["c"] = g_msgCounter;
-  uint16_t length = (uint16_t)serializeJson(doc, buffer, sizeof(buffer));
+  uint8_t status = 0;
+  status |= (doorOpen << 0);
+  status |= (motionDetected << 1);
+  status |= (vibrationDetected << 2);
+  status |= (newMail << 3);
+  buffer[0] = 'l';
+  buffer[1] = 'm';
+  buffer[2] = status;
+  buffer[3] = (uint8_t) g_msgCounter;
+  size_t length = sizeof(buffer);
   // write number of bytes for payload
   // LoRa.write((uint8_t*)(&length), sizeof(length));
   int state = g_radio.transmit(buffer, length);

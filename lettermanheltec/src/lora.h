@@ -15,7 +15,7 @@ public:
         ;
     }
     void begin();
-    void sendMessage(bool doorOpen, bool motionDetected, bool newMail);
+    void sendMessage(bool doorOpen, bool motionDetected, bool vibrationDetected, bool newMail);
 
 private:
     SX1262 m_radio;
@@ -41,7 +41,7 @@ void LoraSender::begin()
     }
 }
 
-void LoraSender::sendMessage(bool doorOpen, bool motionDetected, bool newMail)
+void LoraSender::sendMessage(bool doorOpen, bool motionDetected, bool vibrationDetected, bool newMail)
 {
   Serial.print(F("[SX1262] Transmitting packet ... "));
   // Identifier:uint16, payloadsize:uint16t, payload
@@ -52,9 +52,10 @@ void LoraSender::sendMessage(bool doorOpen, bool motionDetected, bool newMail)
   StaticJsonDocument<1000> doc;
   // Add values in the document
   //
-  doc["door"] = (doorOpen ? "open" : "closed"); // off = closed
-  doc["motion"] = (motionDetected) ? "on" : "off";  // off = clear
-  doc["newmail"] = (newMail) ? "on" : "off";  // off = clear
+  doc["d"] = (doorOpen ? 1 : 0); // door: 1 = open, 0 = closed
+  doc["m"] = (motionDetected) ? 1 : 0;  // motion: 1 = motion, 0 = clear
+  doc["v"] = (vibrationDetected) ? 1 : 0;  // motion: 1 = motion, 0 = clear
+  doc["nm"] = (newMail) ? 1 : 0;  // 1: new mail, 0 = clear
   doc["c"] = m_msgCounter;
   uint16_t length = (uint16_t)serializeJson(doc, buffer, sizeof(buffer));
   // write number of bytes for payload
