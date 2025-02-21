@@ -10,12 +10,13 @@
 #include <Wire.h>
 #include <RadioLib.h>
 #include <ArduinoJson.h>
-#include <esplog.h>
+#define LOG_LOCAL_LEVEL ESP_LOG_VERBOSE
+#include "esp_log.h"
+
 
 #include "platform.h"
 
 #define WAKEUP_BITMASK (1 << INPUT_VIBRATION | 1 << INPUT_MOTION | 1 << INPUT_DOOR)
-
 RTC_DATA_ATTR int bootCount = 0;
 
 SX1262 g_radio = new Module(LORA_CS, LORA_IRQ, LORA_RST, LORA_BUSY);
@@ -35,16 +36,17 @@ void initRadio()
 {
   // initialize SX1262 with default settings
   SPI.begin(LORA_SCK, LORA_MISO, LORA_MOSI, LORA_CS);
-  Serial.print(F("[SX1262] Initializing ... "));
+  log_i("[SX1262] Initializing ... ");
   int state = g_radio.begin(LORA_FREQ);
+  // set to max power. 
+  g_radio.setOutputPower(22);
   if (state == RADIOLIB_ERR_NONE)
   {
-    Serial.println(F("success!"));
+    log_i("success!");
   }
   else
   {
-    Serial.print(F("failed, code "));
-    Serial.println(state);
+    log_e("failed, code %d", state);
     while (true)
       ;
   }
@@ -63,22 +65,22 @@ void print_wakeup_reason()
   switch (wakeup_reason)
   {
   case ESP_SLEEP_WAKEUP_EXT0:
-    Serial.println("Wakeup caused by external signal using RTC_IO");
+    log_i("Wakeup caused by external signal using RTC_IO");
     break;
   case ESP_SLEEP_WAKEUP_EXT1:
-    Serial.println("Wakeup caused by external signal using RTC_CNTL");
+    log_i("Wakeup caused by external signal using RTC_CNTL");
     break;
   case ESP_SLEEP_WAKEUP_TIMER:
-    Serial.println("Wakeup caused by timer");
+    log_i("Wakeup caused by timer");
     break;
   case ESP_SLEEP_WAKEUP_TOUCHPAD:
-    Serial.println("Wakeup caused by touchpad");
+    log_i("Wakeup caused by touchpad");
     break;
   case ESP_SLEEP_WAKEUP_ULP:
-    Serial.println("Wakeup caused by ULP program");
+    log_i("Wakeup caused by ULP program");
     break;
   default:
-    Serial.printf("Wakeup was not caused by deep sleep: %d\n", wakeup_reason);
+    log_i("Wakeup was not caused by deep sleep: %d\n", wakeup_reason);
     break;
   }
 }
@@ -118,6 +120,11 @@ void setup()
   pinMode(INPUT_DOOR, INPUT);
   pinMode(INPUT_MOTION, INPUT);
   pinMode(INPUT_VIBRATION, INPUT);
+  digitalWrite(LED, HIGH);
+  delay(1000);
+  digitalWrite(LED, LOW);
+  delay(1000);
+  digitalWrite(LED, HIGH);
   initRadio();
   // Increment boot number and print it every reboot
   ++bootCount;
@@ -213,7 +220,8 @@ void sendLoRaMsg(bool doorOpen, bool motionDetected, bool vibrationDetected, boo
 
   Serial.printf("Sending %d bytes payload", length);
   Serial.println();
-  Serial.printf("Buffer: %s", buffer);
+  // TODO: fix, we cant say if we have really 0 byte at the end
+  //Serial.printf("Buffer: %s", buffer);
   Serial.println();
 }
 
