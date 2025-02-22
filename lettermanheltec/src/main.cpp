@@ -10,16 +10,23 @@
 #include <Wire.h>
 #include <RadioLib.h>
 #include <ArduinoJson.h>
-#define LOG_LOCAL_LEVEL ESP_LOG_VERBOSE
 #include "esp_log.h"
 
-
 #include "platform.h"
+
+// automatically detect which board is being used
+#define RADIO_BOARD_AUTO
+
+// now include RadioBoards
+// this must be included AFTER RadioLib!
+#include <RadioBoards.h>
+
 
 #define WAKEUP_BITMASK (1 << INPUT_VIBRATION | 1 << INPUT_MOTION | 1 << INPUT_DOOR)
 RTC_DATA_ATTR int bootCount = 0;
 
-SX1262 g_radio = new Module(LORA_CS, LORA_IRQ, LORA_RST, LORA_BUSY);
+//SX1262 g_radio = new Module(LORA_CS, LORA_IRQ, LORA_RST, LORA_BUSY);
+Radio g_radio = new RadioModule();
 uint16_t g_msgCounter = 0;
 bool g_doorOpen = false;
 bool g_motionDetected = false;
@@ -35,11 +42,11 @@ bool g_ledState = false;
 void initRadio()
 {
   // initialize SX1262 with default settings
-  SPI.begin(LORA_SCK, LORA_MISO, LORA_MOSI, LORA_CS);
+
   log_i("[SX1262] Initializing ... ");
   int state = g_radio.begin(LORA_FREQ);
-  // set to max power. 
-  g_radio.setOutputPower(22);
+  // set to max power.
+  //g_radio.setOutputPower(22);
   if (state == RADIOLIB_ERR_NONE)
   {
     log_i("success!");
@@ -97,38 +104,35 @@ void detect_gpio_wakeup()
   if (GPIO_reason & (1 << INPUT_DOOR))
   {
     g_wakeup_door = true;
-    Serial.println("Door was opened");
+    log_i("Door was opened");
   }
 
   if (GPIO_reason & (1 << INPUT_MOTION))
   {
     g_wakeup_motion = true;
-    Serial.println("Motion was triggered");
+    log_i("Motion was triggered");
   }
 
   if (GPIO_reason & (1 << INPUT_VIBRATION))
   {
     g_wakeup_vibration = true;
-    Serial.println("Vibration was triggered");
+    log_i("Vibration was triggered");
   }
 }
 
 void setup()
 {
-  Serial.begin(115200);
+  Serial.begin(9600);
   pinMode(LED, OUTPUT);
   pinMode(INPUT_DOOR, INPUT);
   pinMode(INPUT_MOTION, INPUT);
   pinMode(INPUT_VIBRATION, INPUT);
-  digitalWrite(LED, HIGH);
-  delay(1000);
-  digitalWrite(LED, LOW);
-  delay(1000);
-  digitalWrite(LED, HIGH);
+  digitalWrite(LED, g_ledState);
+  log_i("Sketch running!");
   initRadio();
   // Increment boot number and print it every reboot
   ++bootCount;
-  Serial.println("Boot number: " + String(bootCount));
+  log_i("Boot number: %d", bootCount);
 
   // Print the wakeup reason for ESP32
   print_wakeup_reason();
@@ -146,15 +150,15 @@ void setup()
   Note that using internal pullups/pulldowns also requires
   RTC peripherals to be turned on.
   */
-  //if (esp_sleep_enable_ext0_wakeup(GPIO_NUM_6, 1) != ESP_OK) // 1 = High, 0 = Low
+  // if (esp_sleep_enable_ext0_wakeup(GPIO_NUM_6, 1) != ESP_OK) // 1 = High, 0 = Low
   //{
-  //  Serial.println("Failed to configure ext0 with the given parameters");
-  //}
-  //if (esp_sleep_enable_ext0_wakeup(GPIO_NUM_7, 0) != ESP_OK) // 1 = High, 0 = Low
+  //   Serial.println("Failed to configure ext0 with the given parameters");
+  // }
+  // if (esp_sleep_enable_ext0_wakeup(GPIO_NUM_7, 0) != ESP_OK) // 1 = High, 0 = Low
   //{
-  //  Serial.println("Failed to configure ext0 with the given parameters");
-  //}
-  // If you were to use ext1, you would use it like
+  //   Serial.println("Failed to configure ext0 with the given parameters");
+  // }
+  //  If you were to use ext1, you would use it like
   if (esp_sleep_enable_ext1_wakeup(WAKEUP_BITMASK, ESP_EXT1_WAKEUP_ANY_HIGH) != ESP_OK)
   {
     Serial.println("Failed to configure ext1 with the given parameters");
@@ -180,7 +184,7 @@ void sendLoRaMsg(bool doorOpen, bool motionDetected, bool vibrationDetected, boo
   buffer[0] = 'l';
   buffer[1] = 'm';
   buffer[2] = status;
-  buffer[3] = (uint8_t) g_msgCounter;
+  buffer[3] = (uint8_t)g_msgCounter;
   size_t length = sizeof(buffer);
   // write number of bytes for payload
   // LoRa.write((uint8_t*)(&length), sizeof(length));
@@ -221,23 +225,20 @@ void sendLoRaMsg(bool doorOpen, bool motionDetected, bool vibrationDetected, boo
   Serial.printf("Sending %d bytes payload", length);
   Serial.println();
   // TODO: fix, we cant say if we have really 0 byte at the end
-  //Serial.printf("Buffer: %s", buffer);
+  // Serial.printf("Buffer: %s", buffer);
   Serial.println();
 }
-
-
-
 
 void loop()
 {
   digitalWrite(LED, g_ledState);
   g_ledState = !g_ledState;
-  
-  if(g_doorOpen)
+
+  if (g_doorOpen)
   {
     g_newMail = false;
   }
-  
+
   Serial.printf("Door open %d\n", g_doorOpen);
   Serial.printf("Motion %d\n", g_motionDetected);
   Serial.printf("Vibration %d\n", g_vibrationDetected);
